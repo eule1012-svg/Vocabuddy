@@ -1,0 +1,253 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PlanStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum UserWordStatus {
+  NEW
+  LEARNING
+  REVIEW_DUE
+  KNOWN
+  MASTERED
+  RELEARNING
+}
+
+enum GiftTaskStatus {
+  PENDING
+  PARTIALLY_ACCEPTED
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+enum GiftItemStatus {
+  PENDING
+  ACCEPTED
+  SKIPPED
+}
+
+enum ContentStatus {
+  COMPLETE
+  NEEDS_COMPLETION
+  INVALID
+}
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  BLOCKED
+  REMOVED
+}
+
+model User {
+  id                  String              @id @default(cuid())
+  email               String              @unique
+  username            String              @unique
+  passwordHash        String
+  nativeLanguageCode  String
+  timezone            String              @default("Asia/Shanghai")
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  deletedAt           DateTime?
+
+  learningPlans       LearningPlan[]
+  wordStates          UserWordState[]
+  studySessions       StudySession[]
+  reviewAttempts      ReviewAttempt[]
+  sentFriendships     Friendship[]        @relation("FriendshipRequester")
+  receivedFriendships Friendship[]        @relation("FriendshipReceiver")
+  sentGiftTasks       GiftTask[]          @relation("GiftTaskSender")
+  receivedGiftTasks   GiftTask[]          @relation("GiftTaskReceiver")
+}
+
+model LearningPlan {
+  id                String        @id @default(cuid())
+  userId            String
+  nativeLanguageCode String
+  targetLanguageCode String
+  goalCode          String
+  currentLevel      String
+  targetLevel       String
+  dailyNewWordCount Int           @default(10)
+  dailyReviewLimit  Int           @default(50)
+  startDate         DateTime      @default(now())
+  status            PlanStatus    @default(ACTIVE)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wordStates        UserWordState[]
+  studySessions     StudySession[]
+
+  @@index([userId, status])
+  @@index([nativeLanguageCode, targetLanguageCode])
+}
+
+model Word {
+  id              String             @id @default(cuid())
+  languageCode    String
+  term            String
+  normalizedTerm  String
+  partOfSpeech    String?
+  phonetic        String?
+  audioUrl        String?
+  level           String?
+  source          String?
+  reviewStatus    String              @default("draft")
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  localizations   WordLocalization[]
+  wordStates      UserWordState[]
+  reviewAttempts  ReviewAttempt[]
+  giftItems       GiftTaskItem[]
+
+  @@unique([languageCode, normalizedTerm])
+  @@index([languageCode, level])
+}
+
+model WordLocalization {
+  id                      String   @id @default(cuid())
+  wordId                  String
+  explanationLanguageCode  String
+  definitions             Json
+  examples                Json
+  collocations            Json?
+  usageNotes              Json?
+  wordForms               Json?
+  source                  String?
+  version                 String?
+  reviewStatus            String   @default("draft")
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  word                    Word     @relation(fields: [wordId], references: [id], onDelete: Cascade)
+
+  @@unique([wordId, explanationLanguageCode])
+}
+
+model UserWordState {
+  id                String         @id @default(cuid())
+  userId            String
+  wordId            String
+  learningPlanId    String
+  status            UserWordStatus @default(NEW)
+  masteryLevel      Int            @default(0)
+  correctCount      Int            @default(0)
+  incorrectCount    Int            @default(0)
+  lastReviewedAt    DateTime?
+  nextReviewAt      DateTime?
+  addedSource       String         @default("system")
+  userNote          String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  user              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  word              Word           @relation(fields: [wordId], references: [id], onDelete: Cascade)
+  learningPlan      LearningPlan   @relation(fields: [learningPlanId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, wordId, learningPlanId])
+  @@index([userId, nextReviewAt])
+}
+
+model StudySession {
+  id              String         @id @default(cuid())
+  userId          String
+  learningPlanId  String
+  sessionType     String
+  sessionDate     DateTime
+  completedAt     DateTime?
+  createdAt       DateTime       @default(now())
+
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  learningPlan    LearningPlan   @relation(fields: [learningPlanId], references: [id], onDelete: Cascade)
+  attempts        ReviewAttempt[]
+
+  @@index([userId, sessionDate])
+}
+
+model ReviewAttempt {
+  id              String       @id @default(cuid())
+  userId          String
+  wordId          String
+  studySessionId  String?
+  questionType    String
+  answer          String?
+  isCorrect       Boolean
+  responseTimeMs  Int?
+  idempotencyKey  String       @unique
+  createdAt       DateTime     @default(now())
+
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  word            Word         @relation(fields: [wordId], references: [id], onDelete: Cascade)
+  studySession    StudySession? @relation(fields: [studySessionId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+}
+
+model Friendship {
+  id           String           @id @default(cuid())
+  requesterId  String
+  receiverId   String
+  status       FriendshipStatus @default(PENDING)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  requester    User             @relation("FriendshipRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  receiver     User             @relation("FriendshipReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, receiverId])
+  @@index([receiverId, status])
+}
+
+model GiftTask {
+  id                  String          @id @default(cuid())
+  senderId            String
+  receiverId          String
+  title               String
+  sourceLanguageCode  String
+  recommendationNote  String?
+  recommendationTranslation String?
+  translationProvider String?
+  translationVersion  String?
+  status              GiftTaskStatus  @default(PENDING)
+  dueDate             DateTime?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  sender              User            @relation("GiftTaskSender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver            User            @relation("GiftTaskReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  items               GiftTaskItem[]
+
+  @@index([receiverId, status])
+}
+
+model GiftTaskItem {
+  id              String          @id @default(cuid())
+  giftTaskId      String
+  wordId          String?
+  customTerm      String?
+  matchedWordId   String?
+  note            String?
+  status          GiftItemStatus  @default(PENDING)
+  contentStatus   ContentStatus   @default(COMPLETE)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  giftTask        GiftTask        @relation(fields: [giftTaskId], references: [id], onDelete: Cascade)
+  word            Word?           @relation(fields: [wordId], references: [id], onDelete: SetNull)
+
+  @@index([giftTaskId, status])
+}
